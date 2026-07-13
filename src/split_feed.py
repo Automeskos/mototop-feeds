@@ -23,7 +23,7 @@ COMBINED_NAME = "mototop-filtered.xml"
 def download_feed(url: str, destination: Path) -> dict[str, float | int]:
     started = time.monotonic()
     headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; Automeškos-Mototop-Feed/1.0)",
+        "User-Agent": "Mozilla/5.0 (compatible; Automeskos-Mototop-Feed/1.0)",
         "Accept": "application/xml,text/xml,*/*;q=0.8",
     }
     with requests.get(url, headers=headers, stream=True, timeout=(30, 600)) as response:
