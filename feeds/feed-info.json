@@ -1,8 +1,9 @@
 {
-  "download_seconds": 28.15,
-  "source_bytes": 54055703,
-  "total_source_products": 5080,
-  "combined_unique_products": 4083,
+  "download_seconds": 29.01,
+  "source_bytes": 54053072,
+  "total_source_products": 5079,
+  "combined_unique_products": 4082,
+  "inventory_skus": 5728,
   "outputs": {
     "apranga.xml": {
       "products": 933,
@@ -10,15 +11,19 @@
     },
     "detales.xml": {
       "products": 1915,
-      "bytes": 33784728
+      "bytes": 33784897
     },
     "aksesuarai.xml": {
-      "products": 1601,
-      "bytes": 10153448
+      "products": 1600,
+      "bytes": 10150778
     }
   },
   "mototop-filtered.xml": {
-    "products": 4083,
-    "bytes": 54338436
+    "products": 4082,
+    "bytes": 54335839
+  },
+  "inventory-update.xml": {
+    "skus": 5728,
+    "bytes": 483242
   }
 }
