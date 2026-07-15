@@ -1,6 +1,6 @@
 {
-  "download_seconds": 30.76,
-  "source_bytes": 54055732,
+  "download_seconds": 29.39,
+  "source_bytes": 54055733,
   "total_source_products": 5080,
   "combined_unique_products": 4083,
   "update_skus": 6677,
@@ -11,7 +11,7 @@
     },
     "detales.xml": {
       "products": 1915,
-      "bytes": 33784895
+      "bytes": 33784896
     },
     "aksesuarai.xml": {
       "products": 1601,
@@ -20,10 +20,10 @@
   },
   "mototop-filtered.xml": {
     "products": 4083,
-    "bytes": 54338414
+    "bytes": 54338415
   },
   "inventory-price-update.xml": {
     "skus": 6677,
-    "bytes": 808553
+    "bytes": 808554
   }
 }
