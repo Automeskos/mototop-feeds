@@ -1,11 +1,11 @@
 {
-  "download_seconds": 27.23,
-  "source_bytes": 53586865,
+  "download_seconds": 28.52,
+  "source_bytes": 53593125,
   "total_source_products": 5008,
   "combined_unique_products": 4089,
-  "update_skus": 6609,
+  "update_skus": 6615,
   "inventory-update.xml": {
-    "skus": 6609,
-    "bytes": 800831
+    "skus": 6615,
+    "bytes": 801639
   }
 }
