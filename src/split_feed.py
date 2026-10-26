@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import csv
 import json
 import os
 import sys
@@ -23,6 +24,7 @@ COMBINED_NAME = "mototop-filtered.xml"
 # Paliekame tą patį failo vardą ir XML struktūrą, kurie jau veikė SyncX.
 UPDATE_NAME = "inventory-update.xml"
 DIAGNOSTIC_NAME = "warehouse-check.json"
+WAREHOUSE_NAME = "warehouse-status.csv"
 DIAGNOSTIC_LIMIT = 10
 
 
@@ -238,6 +240,62 @@ def inspect_stock_fields(product: etree._Element) -> dict[str, object]:
     return {"fields": fields, "first_option_values": option_samples}
 
 
+
+def warehouse_status(quantity: str, status: str) -> str:
+    """Status for Shopify; unverified or zero inventory is always sold out.
+
+    These values are imported into variant metafield custom.tiekejo_sandelis.
+    The existing SyncX inventory XML is not changed.
+    """
+    if safe_int(quantity) <= 0:
+        return "isparduota"
+
+    normalized = normalize(status).replace("–", "-").replace("—", "-")
+    if normalized in ("parduotuvėje", "parduotuveje"):
+        return "2-3d"
+    if normalized.startswith("pristatymas 5-15 dien"):
+        return "5-15d"
+    if normalized.startswith("2-5 dien"):
+        return "2-5d"
+    return "isparduota"
+
+
+def warehouse_rows(product: etree._Element) -> list[dict[str, str]]:
+    """Uses precisely the same SKU conventions as the existing SyncX update."""
+    items = update_rows(product)
+    parent_status = safe_text(product, "stock_status")
+    options = product.find("options")
+    option_nodes = options.findall("option") if options is not None else []
+    values_node = option_nodes[0].find("values") if option_nodes else None
+    values = values_node.findall("value") if values_node is not None else []
+    # Match the SKU mapping of update_rows, including the fallback if none are valid.
+    matched_values = [v for v in values if safe_text(v, "option_value_id") or safe_text(v, "name")]
+    result = []
+    for index, item in enumerate(items):
+        status = parent_status
+        if len(matched_values) == len(items):
+            status = safe_text(matched_values[index], "stock_status") or parent_status
+        result.append({
+            "Variant SKU": item["sku"],
+            "Variant Metafield: custom.tiekejo_sandelis [single_line_text_field]": warehouse_status(item["quantity"], status),
+        })
+    return result
+
+
+def write_warehouse_csv(path: Path, rows: list[dict[str, str]]) -> int:
+    header = ["Variant SKU", "Variant Metafield: custom.tiekejo_sandelis [single_line_text_field]"]
+    seen = set()
+    with path.open("w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=header)
+        writer.writeheader()
+        for row in rows:
+            sku = row["Variant SKU"]
+            if not sku or sku in seen:
+                continue
+            seen.add(sku)
+            writer.writerow(row)
+    return len(seen)
+
 def main() -> int:
     url = os.environ.get("MOTOTOP_FEED_URL", "").strip()
     if not url:
@@ -256,6 +314,7 @@ def main() -> int:
         combined: list[etree._Element] = []
         combined_seen: set[str] = set()
         all_updates: list[dict[str, str]] = []
+        warehouse_updates: list[dict[str, str]] = []
         stock_samples: list[dict[str, object]] = []
         total_products = 0
 
@@ -285,6 +344,7 @@ def main() -> int:
 
             # Likučiai ir kainos imami iš VISO Mototop katalogo.
             all_updates.extend(update_rows(element))
+            warehouse_updates.extend(warehouse_rows(element))
 
             category_path = normalize(element.findtext("category_path"))
             key = product_key(element)
@@ -324,7 +384,9 @@ def main() -> int:
             generated_at,
         )
 
-        # Naujas failas: tik patikrinimas, joks Shopify / SyncX jo nenaudoja.
+        warehouse_count = write_warehouse_csv(OUTPUT_DIR / WAREHOUSE_NAME, warehouse_updates)
+
+        # Diagnostika: joks Shopify / SyncX jos automatiškai nenaudoja.
         (OUTPUT_DIR / DIAGNOSTIC_NAME).write_text(
             json.dumps(stock_samples, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -339,6 +401,7 @@ def main() -> int:
                 "skus": written_updates,
                 "bytes": (OUTPUT_DIR / UPDATE_NAME).stat().st_size,
             },
+            WAREHOUSE_NAME: {"skus": warehouse_count, "bytes": (OUTPUT_DIR / WAREHOUSE_NAME).stat().st_size},
             DIAGNOSTIC_NAME: {
                 "samples": len(stock_samples),
                 "bytes": (OUTPUT_DIR / DIAGNOSTIC_NAME).stat().st_size,
