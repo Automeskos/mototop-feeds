@@ -1,201 +1,17 @@
-from __future__ import annotations
-
-import copy
-import json
-import os
-import sys
-import tempfile
-import time
-from pathlib import Path
-
-import requests
-from lxml import etree
-
-OUTPUT_DIR = Path("feeds")
-
-TARGETS = {
-    "apranga.xml": ("apranga",),
-    "detales.xml": ("detalės", "detales"),
-    "aksesuarai.xml": ("aksesuarai",),
-}
-
-COMBINED_NAME = "mototop-filtered.xml"
-# Paliekame tą patį failo vardą, kuris jau veikė SyncX.
-UPDATE_NAME = "inventory-update.xml"
-
-
-def download_feed(url: str, destination: Path) -> dict[str, float | int]:
-    started = time.monotonic()
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; Automeskos-Mototop-Feed/1.3)",
-        "Accept": "application/xml,text/xml,*/*;q=0.8",
-    }
-
-    with requests.get(url, headers=headers, stream=True, timeout=(30, 600)) as response:
-        response.raise_for_status()
-        total = 0
-        with destination.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    handle.write(chunk)
-                    total += len(chunk)
-
-    return {
-        "download_seconds": round(time.monotonic() - started, 2),
-        "source_bytes": total,
-    }
-
-
-def normalize(value: str | None) -> str:
-    return " ".join((value or "").casefold().split())
-
-
-def safe_text(element: etree._Element, tag: str, default: str = "") -> str:
-    value = element.findtext(tag)
-    return value.strip() if value and value.strip() else default
-
-
-def safe_float(value: str | None, default: float = 0.0) -> float:
-    try:
-        return float((value or "").replace(",", ".").strip())
-    except (TypeError, ValueError):
-        return default
-
-
-def safe_int(value: str | None, default: int = 0) -> int:
-    return int(safe_float(value, float(default)))
-
-
-def selling_prices(product: etree._Element) -> tuple[float, float]:
-    regular = safe_float(product.findtext("price_inc_vat"))
-    special = safe_float(product.findtext("special_inc_vat") or product.findtext("special"))
-
-    if special > 0 and regular > special:
-        return special, regular
-
-    return regular, 0.0
-
-
-def update_rows(product: etree._Element) -> list[dict[str, str]]:
-    base_sku = (
-        safe_text(product, "sku")
-        or safe_text(product, "model")
-        or safe_text(product, "id")
-    )
-
-    base_price, compare_at = selling_prices(product)
 
     options = product.find("options")
     option_nodes = options.findall("option") if options is not None else []
+    option_samples: list[dict[str, str]] = []
+    if option_nodes:
+        values_node = option_nodes[0].find("values")
+        for value in (values_node.findall("value") if values_node is not None else [])[:10]:
+            option_samples.append({
+                "option_value_id": safe_text(value, "option_value_id"),
+                "name": safe_text(value, "name"),
+                "quantity": safe_text(value, "quantity"),
+            })
 
-    if not option_nodes:
-        return [{
-            "sku": base_sku,
-            "quantity": str(max(0, safe_int(product.findtext("quantity")))),
-            "price": f"{base_price:.2f}",
-            "compare_at_price": f"{compare_at:.2f}" if compare_at > 0 else "",
-        }]
-
-    option = option_nodes[0]
-    values_node = option.find("values")
-    values = values_node.findall("value") if values_node is not None else []
-
-    rows: list[dict[str, str]] = []
-
-    for value in values:
-        option_value_id = safe_text(value, "option_value_id")
-        option_value_name = safe_text(value, "name")
-
-        if not option_value_id and not option_value_name:
-            continue
-
-        suffix = option_value_id or option_value_name.replace(" ", "-").upper()
-        variant_sku = f"{base_sku}-{suffix}"
-
-        delta = safe_float(value.findtext("price"))
-        prefix = safe_text(value, "price_prefix", "+")
-
-        if prefix == "-":
-            variant_price = max(0.0, base_price - delta)
-            variant_compare = max(0.0, compare_at - delta) if compare_at > 0 else 0.0
-        else:
-            variant_price = base_price + delta
-            variant_compare = compare_at + delta if compare_at > 0 else 0.0
-
-        rows.append({
-            "sku": variant_sku,
-            "quantity": str(max(0, safe_int(value.findtext("quantity")))),
-            "price": f"{variant_price:.2f}",
-            "compare_at_price": f"{variant_compare:.2f}" if variant_compare > 0 else "",
-        })
-
-    if rows:
-        return rows
-
-    return [{
-        "sku": base_sku,
-        "quantity": str(max(0, safe_int(product.findtext("quantity")))),
-        "price": f"{base_price:.2f}",
-        "compare_at_price": f"{compare_at:.2f}" if compare_at > 0 else "",
-    }]
-
-
-def product_key(product: etree._Element) -> str:
-    for tag in ("sku", "model", "id"):
-        value = product.findtext(tag)
-        if value and value.strip():
-            return f"{tag}:{value.strip()}"
-    return etree.tostring(product, encoding="unicode")[:500]
-
-
-def write_document(path: Path, root_attributes: dict[str, str], products: list[etree._Element]) -> None:
-    root = etree.Element("feed", **root_attributes)
-    products_node = etree.SubElement(root, "products")
-
-    for product in products:
-        products_node.append(product)
-
-    etree.ElementTree(root).write(
-        str(path),
-        encoding="UTF-8",
-        xml_declaration=True,
-        pretty_print=False,
-    )
-
-
-def write_update_feed(path: Path, rows: list[dict[str, str]], generated_at: str) -> int:
-    # SVARBU: grąžiname seną šaknį <inventory>, kuri jau veikė SyncX.
-    root = etree.Element(
-        "inventory",
-        generated_at=generated_at,
-        generated_by="Automeskos GitHub inventory and price feed",
-    )
-    products_node = etree.SubElement(root, "products")
-
-    seen: set[str] = set()
-    written = 0
-
-    for item in rows:
-        sku = item["sku"]
-        if not sku or sku in seen:
-            continue
-
-        seen.add(sku)
-        written += 1
-
-        product_node = etree.SubElement(products_node, "product")
-        etree.SubElement(product_node, "sku").text = sku
-        etree.SubElement(product_node, "quantity").text = item["quantity"]
-        etree.SubElement(product_node, "price").text = item["price"]
-        etree.SubElement(product_node, "compare_at_price").text = item["compare_at_price"]
-
-    etree.ElementTree(root).write(
-        str(path),
-        encoding="UTF-8",
-        xml_declaration=True,
-        pretty_print=False,
-    )
-    return written
+    return {"fields": fields, "first_option_values": option_samples}
 
 
 def main() -> int:
@@ -216,6 +32,7 @@ def main() -> int:
         combined: list[etree._Element] = []
         combined_seen: set[str] = set()
         all_updates: list[dict[str, str]] = []
+        stock_samples: list[dict[str, object]] = []
         total_products = 0
 
         context = etree.iterparse(
@@ -234,6 +51,13 @@ def main() -> int:
                 continue
 
             total_products += 1
+
+            # Tik diagnostikai. Nekeičia likučių, kainų ar XML importo.
+            if len(stock_samples) < DIAGNOSTIC_LIMIT:
+                stock_samples.append({
+                    "sku": safe_text(element, "sku") or safe_text(element, "model") or safe_text(element, "id"),
+                    "stock_fields": inspect_stock_fields(element),
+                })
 
             # Likučiai ir kainos imami iš VISO Mototop katalogo.
             all_updates.extend(update_rows(element))
@@ -276,6 +100,12 @@ def main() -> int:
             generated_at,
         )
 
+        # Naujas failas: tik patikrinimas, joks Shopify / SyncX jo nenaudoja.
+        (OUTPUT_DIR / DIAGNOSTIC_NAME).write_text(
+            json.dumps(stock_samples, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
         info = {
             **stats,
             "total_source_products": total_products,
@@ -284,6 +114,10 @@ def main() -> int:
             UPDATE_NAME: {
                 "skus": written_updates,
                 "bytes": (OUTPUT_DIR / UPDATE_NAME).stat().st_size,
+            },
+            DIAGNOSTIC_NAME: {
+                "samples": len(stock_samples),
+                "bytes": (OUTPUT_DIR / DIAGNOSTIC_NAME).stat().st_size,
             },
         }
 
