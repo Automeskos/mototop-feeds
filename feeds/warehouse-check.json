@@ -1,0 +1,162 @@
+[
+  {
+    "sku": "Primavera 50cc 4T",
+    "stock_fields": {
+      "fields": [
+        {
+          "path": "/feed/products/product[1]/quantity",
+          "value": "0"
+        },
+        {
+          "path": "/feed/products/product[1]/stock_status",
+          "value": "Dėl prieinamumo teiraukitės"
+        }
+      ],
+      "first_option_values": []
+    }
+  },
+  {
+    "sku": "AB51-1030",
+    "stock_fields": {
+      "fields": [
+        {
+          "path": "/feed/products/product[2]/quantity",
+          "value": "1"
+        },
+        {
+          "path": "/feed/products/product[2]/stock_status",
+          "value": "2-5 Dienos"
+        }
+      ],
+      "first_option_values": []
+    }
+  },
+  {
+    "sku": "AB25-1424",
+    "stock_fields": {
+      "fields": [
+        {
+          "path": "/feed/products/product[2]/quantity",
+          "value": "3"
+        },
+        {
+          "path": "/feed/products/product[2]/stock_status",
+          "value": "Parduotuvėje"
+        }
+      ],
+      "first_option_values": []
+    }
+  },
+  {
+    "sku": "AB25-1150",
+    "stock_fields": {
+      "fields": [
+        {
+          "path": "/feed/products/product[2]/quantity",
+          "value": "0"
+        },
+        {
+          "path": "/feed/products/product[2]/stock_status",
+          "value": "Parduotuvėje"
+        }
+      ],
+      "first_option_values": []
+    }
+  },
+  {
+    "sku": "05060638",
+    "stock_fields": {
+      "fields": [
+        {
+          "path": "/feed/products/product[2]/quantity",
+          "value": "0"
+        },
+        {
+          "path": "/feed/products/product[2]/stock_status",
+          "value": "2-5 Dienos"
+        }
+      ],
+      "first_option_values": []
+    }
+  },
+  {
+    "sku": "NU-8520ST",
+    "stock_fields": {
+      "fields": [
+        {
+          "path": "/feed/products/product[2]/quantity",
+          "value": "1"
+        },
+        {
+          "path": "/feed/products/product[2]/stock_status",
+          "value": "Parduotuvėje"
+        }
+      ],
+      "first_option_values": []
+    }
+  },
+  {
+    "sku": "UP-6245ST",
+    "stock_fields": {
+      "fields": [
+        {
+          "path": "/feed/products/product[2]/quantity",
+          "value": "1"
+        },
+        {
+          "path": "/feed/products/product[2]/stock_status",
+          "value": "Parduotuvėje"
+        }
+      ],
+      "first_option_values": []
+    }
+  },
+  {
+    "sku": "BF-5",
+    "stock_fields": {
+      "fields": [
+        {
+          "path": "/feed/products/product[2]/quantity",
+          "value": "1"
+        },
+        {
+          "path": "/feed/products/product[2]/stock_status",
+          "value": "Parduotuvėje"
+        }
+      ],
+      "first_option_values": []
+    }
+  },
+  {
+    "sku": "M20030",
+    "stock_fields": {
+      "fields": [
+        {
+          "path": "/feed/products/product[2]/quantity",
+          "value": "2"
+        },
+        {
+          "path": "/feed/products/product[2]/stock_status",
+          "value": "Pristatymas 5-15 dienų"
+        }
+      ],
+      "first_option_values": []
+    }
+  },
+  {
+    "sku": "BF-2",
+    "stock_fields": {
+      "fields": [
+        {
+          "path": "/feed/products/product[2]/quantity",
+          "value": "0"
+        },
+        {
+          "path": "/feed/products/product[2]/stock_status",
+          "value": "Parduotuvėje"
+        }
+      ],
+      "first_option_values": []
+    }
+  }
+]
