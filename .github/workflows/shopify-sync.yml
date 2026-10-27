@@ -1,0 +1,52 @@
+name: Shopify URL and Stock Status Sync
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "urls (vienkartiniai URL) arba statuses (pristatymo būsenos)"
+        required: true
+        type: choice
+        options:
+          - urls
+          - statuses
+      apply:
+        description: "Tikrai keisti Shopify? false = tik peržiūra"
+        required: true
+        type: boolean
+        default: false
+      limit:
+        description: "Didžiausias keičiamų įrašų skaičius (0 = visi)"
+        required: true
+        default: "10"
+        type: string
+permissions:
+  contents: read
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'requests>=2.32,<3'
+      - name: Run safe sync
+        env:
+          SHOPIFY_SHOP: ${{ secrets.SHOPIFY_SHOP }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          SYNC_MODE: ${{ inputs.mode }}
+          SYNC_APPLY: ${{ inputs.apply }}
+          SYNC_LIMIT: ${{ inputs.limit }}
+        run: |
+          ARGS=(--mode "$SYNC_MODE" --limit "$SYNC_LIMIT")
+          if [ "$SYNC_APPLY" = "true" ]; then ARGS+=(--apply); fi
+          python src/shopify_sync.py "${ARGS[@]}"
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shopify-sync-report
+          path: reports/
+          if-no-files-found: ignore
