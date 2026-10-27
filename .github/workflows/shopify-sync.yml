@@ -1,4 +1,5 @@
 name: Shopify URL and Stock Status Sync
+
 on:
   workflow_dispatch:
     inputs:
@@ -19,29 +20,72 @@ on:
         required: true
         default: "10"
         type: string
+  workflow_run:
+    workflows:
+      - Update Mototop feeds
+    types:
+      - completed
+    branches:
+      - main
+
 permissions:
   contents: read
+
+concurrency:
+  group: shopify-synchronization
+  cancel-in-progress: false
+
 jobs:
   sync:
+    # Automatiškai tik po sėkmingo Mototop atnaujinimo main šakoje.
+    # Rankinis paleidimas lieka prieinamas kaip anksčiau.
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'workflow_run' &&
+         github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.head_branch == 'main')
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install 'requests>=2.32,<3'
-      - name: Run safe sync
+      - name: Install dependencies
+        run: python -m pip install 'requests>=2.32,<3'
+      - name: Check status file exists
+        if: github.event_name == 'workflow_run' || inputs.mode == 'statuses'
+        run: test -s feeds/warehouse-status.csv
+      - name: Run Shopify sync
         env:
           SHOPIFY_SHOP: ${{ secrets.SHOPIFY_SHOP }}
           SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
           SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
-          SYNC_MODE: ${{ inputs.mode }}
-          SYNC_APPLY: ${{ inputs.apply }}
-          SYNC_LIMIT: ${{ inputs.limit }}
+          MANUAL_MODE: ${{ inputs.mode }}
+          MANUAL_APPLY: ${{ inputs.apply }}
+          MANUAL_LIMIT: ${{ inputs.limit }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
         run: |
-          ARGS=(--mode "$SYNC_MODE" --limit "$SYNC_LIMIT")
-          if [ "$SYNC_APPLY" = "true" ]; then ARGS+=(--apply); fi
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            # Automatinis darbas: tik pristatymo būsenos, visi SKU.
+            ARGS=(--mode statuses --limit 0 --apply)
+          else
+            [[ "$MANUAL_LIMIT" =~ ^[0-9]+$ ]] || { echo "Netinkamas limitas"; exit 1; }
+            ARGS=(--mode "$MANUAL_MODE" --limit "$MANUAL_LIMIT")
+            if [ "$MANUAL_APPLY" = "true" ]; then
+              ARGS+=(--apply)
+            fi
+          fi
+          printf 'Vykdoma: python src/shopify_sync.py %s\n' "${ARGS[*]}"
           python src/shopify_sync.py "${ARGS[@]}"
       - name: Upload report
         if: always()
