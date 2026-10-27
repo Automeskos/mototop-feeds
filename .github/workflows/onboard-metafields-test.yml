@@ -1,0 +1,40 @@
+name: ONBOARD metafields test
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Tikrai atnaujinti TIK juodos ONBOARD striukės 2 variantus?'
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'requests>=2.32,<3'
+      - name: Verify and optionally update two variants
+        env:
+          SHOPIFY_SHOP: ${{ secrets.SHOPIFY_SHOP }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          DO_APPLY: ${{ inputs.apply }}
+        run: |
+          if [ "$DO_APPLY" = 'true' ]; then
+            python src/onboard_metafields_test.py --apply
+          else
+            python src/onboard_metafields_test.py
+          fi
+      - name: Upload diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboard-metafields-report
+          path: reports/onboard-metafields.csv
+          if-no-files-found: warn
