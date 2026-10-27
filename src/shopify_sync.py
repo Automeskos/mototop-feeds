@@ -97,6 +97,23 @@ class Shopify:
         return by_sku, handle_to_product
 
 
+def approved_duplicate_matches(path: Path) -> dict[str, set[str]]:
+    """Only explicitly approved (SKU, Shopify product ID) combinations.
+
+    This is NOT a general rule to copy supplier status to all duplicates.
+    """
+    result: dict[str, set[str]] = defaultdict(set)
+    if not path.exists():
+        return result
+    for row in read_csv(path):
+        sku = (row.get("sku") or "").strip()
+        product_id = (row.get("shopify_product_id") or "").strip()
+        if not sku or not product_id.isdigit():
+            raise ValueError(f"Netinkamas dublikatų susiejimo įrašas: {row}")
+        result[sku].add(f"gid://shopify/Product/{product_id}")
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["urls", "statuses"], required=True)
@@ -121,6 +138,7 @@ def main() -> int:
     seen_skus = set()
     allowed = {"2-3d", "2-4d", "2-5d", "5-15d", "isparduota"}
     per_product_target = {}
+    approved = approved_duplicate_matches(Path("config/approved-duplicate-products.csv")) if args.mode == "statuses" else {}
 
     for record in records:
         sku = (record["sku"] if args.mode == "urls" else record["Variant SKU"]).strip().lstrip("'")
@@ -129,6 +147,15 @@ def main() -> int:
             continue
         seen_skus.add(sku)
         matches = by_sku.get(sku, [])
+        if args.mode == "statuses" and len(matches) > 1:
+            # Duplicated SKU: approve only a known Shopify product, NEVER all variants.
+            approved_ids = approved.get(sku, set())
+            approved_matches = [v for v in matches if v["product"]["id"] in approved_ids]
+            if len(approved_matches) == 1 and len(approved_ids) == 1:
+                matches = approved_matches
+            else:
+                issues.append([sku, f"Dublikatas: {len(matches)} variantų, patvirtintų atitikmenų: {len(approved_matches)}"])
+                continue
         if len(matches) != 1:
             issues.append([sku, f"Shopify rasta variantų: {len(matches)}"])
             continue
