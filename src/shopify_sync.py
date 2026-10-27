@@ -119,7 +119,7 @@ def main() -> int:
     plans = []
     issues = []
     seen_skus = set()
-    allowed = {"2-3d", "2-5d", "5-15d", "isparduota"}
+    allowed = {"2-3d", "2-4d", "2-5d", "5-15d", "isparduota"}
     per_product_target = {}
 
     for record in records:
