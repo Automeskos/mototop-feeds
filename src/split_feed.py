@@ -186,22 +186,19 @@ def inspect_stock_fields(product: etree._Element) -> dict[str, object]:
 
 
 def warehouse_status(quantity: str, status: str) -> str:
-    """Variantų būsena: Mototop turimas kiekis -> 2–4 darbo dienos.
+    """Mototop konkretaus varianto kiekis turi pirmenybę prieš stock_status.
 
-    Aiškiai nurodytas 5–15 dienų tiekėjo terminas išlaikomas atskirai.
-    Esant 0 vnt. neužtikriname galimybės užsakyti.
+    Teigiamas kiekis -> 2–4 d. d.  Tik 0 vnt. + aiškus užsakymo
+    terminas -> 5–15 d.  Kitais 0 vnt. atvejais -> išparduota.
     """
     qty = safe_int(quantity)
-    if qty <= 0:
-        return 'isparduota'
+    if qty > 0:
+        return '2-4d'
 
     normalized = normalize(status).replace('–', '-').replace('—', '-')
     if '5-15' in normalized and ('dien' in normalized or 'pristatym' in normalized):
         return '5-15d'
-
-    # Bet koks teigiamas konkretaus dydžio kiekis Mototop sraute:
-    # įskaitant "Parduotuvėje", "2-5 Dienos" ir neaiškų stock_status.
-    return '2-4d'
+    return 'isparduota'
 
 
 def warehouse_rows(product: etree._Element) -> list[dict[str, str]]:
