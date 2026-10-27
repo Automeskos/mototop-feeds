@@ -1,0 +1,45 @@
+name: Repair identical SKU metafields (one-time)
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Really update approved Shopify variant metafields?"
+        required: true
+        type: boolean
+        default: false
+      limit:
+        description: "Max variants (0 = all approved)"
+        required: true
+        default: "10"
+        type: string
+permissions:
+  contents: read
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'requests>=2.32,<3'
+      - name: Audit approved identical SKU variants
+        env:
+          SHOPIFY_SHOP: ${{ secrets.SHOPIFY_SHOP }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          APPLY: ${{ inputs.apply }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          ARGS=(--limit "$LIMIT")
+          if [ "$APPLY" = "true" ]; then ARGS+=(--apply); fi
+          python src/repair_identical_metafields.py "${ARGS[@]}"
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: identical-metafields-report
+          path: reports-identical/
+          if-no-files-found: ignore
