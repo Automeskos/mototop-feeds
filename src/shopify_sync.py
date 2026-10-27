@@ -1,23 +1,34 @@
 from __future__ import annotations
+
 import argparse
 import csv
 import json
 import os
+import re
 import sys
 import time
 from collections import defaultdict
 from pathlib import Path
+
 import requests
 
 API_VERSION = "2026-10"
 PRODUCT_VARIANTS = """query($cursor:String){productVariants(first:100,after:$cursor){nodes{id sku product{id handle}} pageInfo{hasNextPage endCursor}}}"""
 UPDATE = """mutation($product:ProductUpdateInput!){productUpdate(product:$product){product{id handle} userErrors{field message}}}"""
 SET_FIELDS = """mutation($metafields:[MetafieldsSetInput!]!){metafieldsSet(metafields:$metafields){userErrors{field message}}}"""
+STATUS_COLUMN = "Variant Metafield: custom.tiekejo_sandelis [single_line_text_field]"
 
 
-def read_csv(path):
-    with open(path, encoding="utf-8-sig", newline="") as f:
-        return list(csv.DictReader(f))
+def read_csv(path: Path) -> list[dict[str, str]]:
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def write_csv(path: Path, headers: list[str], rows: list[list[str]]) -> None:
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(headers)
+        writer.writerows(rows)
 
 
 class Shopify:
@@ -25,149 +36,204 @@ class Shopify:
         self.shop = os.environ["SHOPIFY_SHOP"].strip().removeprefix("https://").rstrip("/")
         if not self.shop.endswith(".myshopify.com"):
             raise ValueError("SHOPIFY_SHOP turi būti parduotuve.myshopify.com")
-        client_id = os.environ["SHOPIFY_CLIENT_ID"]
-        secret = os.environ["SHOPIFY_CLIENT_SECRET"]
-        response = requests.post(f"https://{self.shop}/admin/oauth/access_token", data={
-            "grant_type":"client_credentials", "client_id":client_id,"client_secret":secret
-        }, timeout=30)
+        response = requests.post(
+            f"https://{self.shop}/admin/oauth/access_token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": os.environ["SHOPIFY_CLIENT_ID"],
+                "client_secret": os.environ["SHOPIFY_CLIENT_SECRET"],
+            },
+            timeout=30,
+        )
         response.raise_for_status()
-        self.token = response.json()["access_token"]
         self.url = f"https://{self.shop}/admin/api/{API_VERSION}/graphql.json"
         self.session = requests.Session()
-        self.session.headers.update({"X-Shopify-Access-Token":self.token,"Content-Type":"application/json"})
+        self.session.headers.update({
+            "X-Shopify-Access-Token": response.json()["access_token"],
+            "Content-Type": "application/json",
+        })
 
-    def gql(self, query, variables):
+    def gql(self, query: str, variables: dict) -> dict:
         for attempt in range(8):
-            resp = self.session.post(self.url,json={"query":query,"variables":variables},timeout=90)
-            if resp.status_code == 429 or resp.status_code >= 500:
-                time.sleep(min(30,2**attempt));continue
-            resp.raise_for_status()
-            payload=resp.json()
-            errors=payload.get("errors") or []
+            response = self.session.post(
+                self.url, json={"query": query, "variables": variables}, timeout=90
+            )
+            if response.status_code == 429 or response.status_code >= 500:
+                time.sleep(min(30, 2 ** attempt))
+                continue
+            response.raise_for_status()
+            payload = response.json()
+            errors = payload.get("errors") or []
             if errors:
-                if any(e.get("extensions",{}).get("code")=="THROTTLED" for e in errors):
-                    time.sleep(min(30,2**attempt));continue
+                if any(e.get("extensions", {}).get("code") == "THROTTLED" for e in errors):
+                    time.sleep(min(30, 2 ** attempt))
+                    continue
                 raise RuntimeError(str(errors))
-            data=payload["data"]
-            return data
+            return payload["data"]
         raise RuntimeError("Shopify API nepavyko po pakartojimų")
 
     def catalog(self):
-        by_sku=defaultdict(list)
-        cursor=None
-        pages=0
+        by_sku = defaultdict(list)
+        handle_to_product = defaultdict(set)
+        cursor = None
+        pages = 0
         while True:
-            result=self.gql(PRODUCT_VARIANTS,{"cursor":cursor})["productVariants"]
-            for v in result["nodes"]:
-                if v.get("sku"):
-                    by_sku[v["sku"].strip()].append(v)
+            data = self.gql(PRODUCT_VARIANTS, {"cursor": cursor})["productVariants"]
+            for variant in data["nodes"]:
+                product = variant["product"]
+                handle_to_product[product["handle"]].add(product["id"])
+                if variant.get("sku"):
+                    by_sku[variant["sku"].strip()].append(variant)
             pages += 1
-            if not result["pageInfo"]["hasNextPage"]:break
-            nxt=result["pageInfo"]["endCursor"]
-            if nxt==cursor:raise RuntimeError("Nepavyko pereiti prie kito katalogo puslapio")
-            cursor=nxt
-            if pages>5000:raise RuntimeError("Per daug katalogo puslapių")
-        print(f"Shopify kataloge skirtingų SKU: {len(by_sku)}")
-        return by_sku
+            if not data["pageInfo"]["hasNextPage"]:
+                break
+            nxt = data["pageInfo"]["endCursor"]
+            if not nxt or nxt == cursor:
+                raise RuntimeError("Nepavyko pereiti prie kito katalogo puslapio")
+            cursor = nxt
+            if pages > 5000:
+                raise RuntimeError("Per daug katalogo puslapių")
+        print(f"Shopify kataloge skirtingų SKU: {len(by_sku)}", flush=True)
+        return by_sku, handle_to_product
 
 
-def main():
-    p=argparse.ArgumentParser()
-    p.add_argument("--mode",choices=["urls","statuses"],required=True)
-    p.add_argument("--apply",action="store_true",help="Be šio parametro nieko nekeičia")
-    p.add_argument("--limit",type=int,default=0,help="0=visi; testui pvz. 10")
-    args=p.parse_args()
-    source=Path("url-changes.csv" if args.mode=="urls" else "feeds/warehouse-status.csv")
-    if not source.exists():raise FileNotFoundError(source)
-    records=read_csv(source)
-    if args.mode=="urls":
-        expected={"sku","handle"}
-    else:
-        expected={"Variant SKU","Variant Metafield: custom.tiekejo_sandelis [single_line_text_field]"}
-    if not records or not expected.issubset(records[0]):
-        raise ValueError("Neteisingi failo stulpeliai")
-    api=Shopify()
-    by_sku=api.catalog()
-    plans=[];issues=[];seen=set();destination_handles={}
-    allowed={"2-3d","2-5d","5-15d","isparduota"}
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["urls", "statuses"], required=True)
+    parser.add_argument("--apply", action="store_true", help="Be parametro nieko nekeičia")
+    parser.add_argument("--limit", type=int, default=0, help="0=visi; 10=testui")
+    args = parser.parse_args()
+    if args.limit < 0:
+        parser.error("--limit negali būti neigiamas")
+
+    source = Path("url-changes.csv" if args.mode == "urls" else "feeds/warehouse-status.csv")
+    if not source.exists():
+        raise FileNotFoundError(source)
+    records = read_csv(source)
+    required = {"sku", "handle"} if args.mode == "urls" else {"Variant SKU", STATUS_COLUMN}
+    if not records or not required.issubset(records[0]):
+        raise ValueError(f"Neteisingi failo stulpeliai; būtini: {sorted(required)}")
+
+    api = Shopify()
+    by_sku, existing_handles = api.catalog()
+    plans = []
+    issues = []
+    seen_skus = set()
+    allowed = {"2-3d", "2-5d", "5-15d", "isparduota"}
+    per_product_target = {}
+
     for record in records:
-        sku=(record["sku"] if args.mode=="urls" else record["Variant SKU"]).strip().lstrip("'")
-        if not sku or sku in seen:
-            issues.append([sku,"Dublikatas arba tuščias SKU"]);continue
-        seen.add(sku)
-        matches=by_sku.get(sku,[])
-        if len(matches)!=1:
-            issues.append([sku,f"Rasta variantų: {len(matches)}"]);continue
-        v=matches[0]
-        if args.mode=="urls":
-            new=record["handle"].strip()
-            if not new or "/" in new or " " in new:
-                issues.append([sku,"Netinkamas naujas handle"]);continue
-            old=v["product"]["handle"]
-            pid=v["product"]["id"]
-            if old==new:continue
-            if not old.startswith("mototop-"):
-                issues.append([sku,f"Dabartinis handle nėra mototop-: {old}"]);continue
-            if pid in destination_handles and destination_handles[pid]!=new:
-                issues.append([sku,"Tam pačiam produktui siūlomi skirtingi URL"]);continue
-            destination_handles[pid]=new
-            plans.append((sku,pid,old,new))
-        else:
-            status=record["Variant Metafield: custom.tiekejo_sandelis [single_line_text_field]"].strip()
+        sku = (record["sku"] if args.mode == "urls" else record["Variant SKU"]).strip().lstrip("'")
+        if not sku or sku in seen_skus:
+            issues.append([sku, "Pasikartojantis arba tuščias SKU"])
+            continue
+        seen_skus.add(sku)
+        matches = by_sku.get(sku, [])
+        if len(matches) != 1:
+            issues.append([sku, f"Shopify rasta variantų: {len(matches)}"])
+            continue
+        variant = matches[0]
+
+        if args.mode == "statuses":
+            status = record[STATUS_COLUMN].strip()
             if status not in allowed:
-                issues.append([sku,f"Nežinoma būsena: {status}"]);continue
-            plans.append((sku,v["id"],"",status))
-    # Net jei CSV eilutės atitinka skirtingus SKU, vieno produkto URL keičiame vieną kartą.
-    if args.mode=="urls":
-        unique=[];pids=set()
-        for item in plans:
-            if item[1] not in pids:unique.append(item);pids.add(item[1])
-        plans=unique
-    # Nevykdyti, jei tas pats naujas handle priskirtas keliems skirtingiems produktams.
-    if args.mode=="urls":
-        handle_pids=defaultdict(set)
-        for _,pid,_,new in plans:handle_pids[new].add(pid)
-        colliding={h for h,ids in handle_pids.items() if len(ids)>1}
-        if colliding:
-            plans=[x for x in plans if x[3] not in colliding]
-            issues.extend([["",f"Dubliuojamas handle: {h}"] for h in sorted(colliding)])
-    Path("reports").mkdir(exist_ok=True)
-    with open("reports/problems.csv","w",encoding="utf-8",newline="") as f:
-        w=csv.writer(f);w.writerow(["sku","problem"]);w.writerows(issues)
-    with open("reports/plan.csv","w",encoding="utf-8",newline="") as f:
-        w=csv.writer(f);w.writerow(["sku","shopify_id","old_handle","target"]);w.writerows(plans)
-    print(f"Režimas: {args.mode}; apply={args.apply}; planas={len(plans)}; atmesta={len(issues)}")
+                issues.append([sku, f"Neatpažinta būsena: {status}"])
+                continue
+            plans.append((sku, variant["id"], "", status))
+            continue
+
+        target = record["handle"].strip().lower()
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", target):
+            issues.append([sku, f"Netinkamas URL handle: {target}"])
+            continue
+        if "mototop" in target:
+            issues.append([sku, f"Naujame URL dar yra 'mototop': {target}"])
+            continue
+        current = variant["product"]["handle"]
+        pid = variant["product"]["id"]
+        if current == target:
+            continue
+        if not current.startswith("mototop-"):
+            issues.append([sku, f"Dabartinis URL nėra mototop-: {current}"])
+            continue
+        owners = existing_handles.get(target, set())
+        if owners and owners != {pid}:
+            issues.append([sku, f"Naujas URL jau naudojamas kitos prekės: {target}"])
+            continue
+        if pid in per_product_target:
+            if per_product_target[pid] != target:
+                issues.append([sku, "Vienam produktui pateikti skirtingi nauji URL"])
+            continue
+        per_product_target[pid] = target
+        plans.append((sku, pid, current, target))
+
+    if args.mode == "urls":
+        target_owners = defaultdict(set)
+        for _, pid, _, target in plans:
+            target_owners[target].add(pid)
+        collision_targets = {key for key, owners in target_owners.items() if len(owners) > 1}
+        if collision_targets:
+            for sku, _, _, target in plans:
+                if target in collision_targets:
+                    issues.append([sku, f"Pasikartojantis naujas URL: {target}"])
+            plans = [plan for plan in plans if plan[3] not in collision_targets]
+
+    # Esminis pataisymas: tas pats limitas galioja ir Dry Run ataskaitai, ir realiam vykdymui.
+    selected = plans[:args.limit] if args.limit > 0 else plans
+    reports = Path("reports")
+    reports.mkdir(exist_ok=True)
+    write_csv(reports / "plan.csv", ["sku", "shopify_id", "old_handle", "target"],
+              [list(item) for item in selected])
+    write_csv(reports / "problems.csv", ["sku", "problem"], issues)
+    print(
+        f"Režimas={args.mode}; apply={args.apply}; bendras tinkamų pakeitimų skaičius={len(plans)}; "
+        f"šiame paleidime={len(selected)}; problemų={len(issues)}",
+        flush=True,
+    )
     if not args.apply:
-        print("DRY RUN: Shopify pakeitimų nėra. Žr. reports/plan.csv ir reports/problems.csv")
+        print("DRY RUN: Shopify duomenys nepakeisti. Žr. reports/plan.csv", flush=True)
         return 0
-    work=plans[:args.limit] if args.limit>0 else plans
-    done=[];failed=[]
-    if args.mode=="urls":
-        for sku,pid,old,new in work:
+
+    done, failed = [], []
+    if args.mode == "urls":
+        for sku, pid, old, new in selected:
             try:
-                result=api.gql(UPDATE,{"product":{"id":pid,"handle":new,"redirectNewHandle":True}})["productUpdate"]
-                if result["userErrors"]:raise RuntimeError(str(result["userErrors"]))
-                if not result.get("product") or result["product"]["handle"]!=new:
-                    raise RuntimeError("Nesutampa atnaujintas handle")
-                done.append([sku,old,new]);time.sleep(0.15)
-            except Exception as e:
-                failed.append([sku,str(e)])
+                result = api.gql(UPDATE, {"product": {
+                    "id": pid, "handle": new, "redirectNewHandle": True,
+                }})["productUpdate"]
+                if result["userErrors"]:
+                    raise RuntimeError(str(result["userErrors"]))
+                if not result.get("product") or result["product"]["handle"] != new:
+                    raise RuntimeError("Po atnaujinimo URL nesutampa")
+                done.append([sku, old, new])
+                time.sleep(0.15)
+            except Exception as exc:
+                failed.append([sku, str(exc)])
     else:
-        # Batches limited to 25 metafields per call; if batch fails, report without silently ignoring.
-        for i in range(0,len(work),25):
-            batch=work[i:i+25]
-            fields=[{"ownerId":vid,"namespace":"custom","key":"tiekejo_sandelis","type":"single_line_text_field","value":status} for _,vid,_,status in batch]
+        for index in range(0, len(selected), 25):
+            batch = selected[index:index + 25]
+            metafields = [{
+                "ownerId": variant_id,
+                "namespace": "custom",
+                "key": "tiekejo_sandelis",
+                "type": "single_line_text_field",
+                "value": status,
+            } for _, variant_id, _, status in batch]
             try:
-                result=api.gql(SET_FIELDS,{"metafields":fields})["metafieldsSet"]
-                if result["userErrors"]:raise RuntimeError(str(result["userErrors"]))
-                done.extend([[sku,status] for sku,_,_,status in batch]);time.sleep(0.15)
-            except Exception as e:
-                failed.extend([[sku,str(e)] for sku,_,_,_ in batch])
-    with open("reports/updated.csv","w",encoding="utf-8",newline="") as f:
-        w=csv.writer(f);w.writerows(done)
-    with open("reports/failed.csv","w",encoding="utf-8",newline="") as f:
-        w=csv.writer(f);w.writerows(failed)
-    print(f"Atnaujinta: {len(done)}, klaidų: {len(failed)}. Žr. reports/")
+                result = api.gql(SET_FIELDS, {"metafields": metafields})["metafieldsSet"]
+                if result["userErrors"]:
+                    raise RuntimeError(str(result["userErrors"]))
+                done.extend([[sku, status] for sku, _, _, status in batch])
+                time.sleep(0.15)
+            except Exception as exc:
+                failed.extend([[sku, str(exc)] for sku, _, _, _ in batch])
+
+    write_csv(reports / "updated.csv", ["sku", "old_or_status", "new_handle"],
+              [row + [""] * (3 - len(row)) for row in done])
+    write_csv(reports / "failed.csv", ["sku", "error"], failed)
+    print(f"Atnaujinta={len(done)}; klaidų={len(failed)}", flush=True)
     return 1 if failed else 0
 
-if __name__=="__main__":sys.exit(main())
+
+if __name__ == "__main__":
+    sys.exit(main())
