@@ -1,0 +1,33 @@
+name: Archive 47 reviewed Shopify products
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Actually archive 47 products? (false = safe preview)'
+        required: true
+        default: false
+        type: boolean
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install requests
+      - name: Check and optionally archive exactly 47 products
+        env:
+          SHOPIFY_SHOP: ${{ secrets.SHOPIFY_SHOP }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          APPLY: ${{ inputs.apply }}
+        run: python src/archive_47_products.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: archive-47-report
+          path: reports/archive-47/results.csv
+          if-no-files-found: warn
