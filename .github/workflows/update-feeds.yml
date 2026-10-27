@@ -25,7 +25,6 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-
       - name: Install dependencies
         run: pip install -r requirements.txt
 
@@ -33,7 +32,6 @@ jobs:
         env:
           MOTOTOP_FEED_URL: ${{ secrets.MOTOTOP_FEED_URL }}
         run: python src/split_feed.py
-
       - name: Commit updated feeds
         run: |
           git config user.name "github-actions[bot]"
