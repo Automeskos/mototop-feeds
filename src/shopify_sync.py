@@ -139,6 +139,12 @@ def main() -> int:
     allowed = {"2-3d", "2-4d", "2-5d", "5-15d", "isparduota"}
     per_product_target = {}
     approved = approved_duplicate_matches(Path("config/approved-duplicate-products.csv")) if args.mode == "statuses" else {}
+    approved_identical = defaultdict(list)
+    if args.mode == "statuses":
+        path = Path("config/approved-identical-variants.csv")
+        if path.exists():
+            for entry in read_csv(path):
+                approved_identical[(entry["sku"].strip())].append(entry)
 
     for record in records:
         sku = (record["sku"] if args.mode == "urls" else record["Variant SKU"]).strip().lstrip("'")
@@ -147,6 +153,28 @@ def main() -> int:
             continue
         seen_skus.add(sku)
         matches = by_sku.get(sku, [])
+        if args.mode == "statuses" and len(matches) > 1 and sku in approved_identical:
+            status = record[STATUS_COLUMN].strip()
+            if status not in allowed:
+                issues.append([sku, f"Neatpažinta būsena: {status}"])
+                continue
+            expected = approved_identical[sku]
+            if len(expected) < 2 or len({e["variant_id"] for e in expected}) != len(expected):
+                issues.append([sku, "Nepatikimas patvirtintų variantų sąrašas"])
+                continue
+            valid = True
+            for e in expected:
+                found = [v for v in matches if v["id"] == f'gid://shopify/ProductVariant/{e["variant_id"]}' and
+                         v["product"]["id"] == f'gid://shopify/Product/{e["product_id"]}']
+                if len(found) != 1:
+                    valid = False
+                    break
+            if valid:
+                for e in expected:
+                    plans.append((sku, f'gid://shopify/ProductVariant/{e["variant_id"]}', "", status))
+                continue
+            issues.append([sku, "Patvirtintas varianto arba produkto ID nebeatitinka Shopify"])
+            continue
         if args.mode == "statuses" and len(matches) > 1:
             # Duplicated SKU: approve only a known Shopify product, NEVER all variants.
             approved_ids = approved.get(sku, set())
