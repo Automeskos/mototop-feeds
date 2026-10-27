@@ -1,16 +1,16 @@
 {
-  "download_seconds": 42.6,
-  "source_bytes": 61807158,
+  "download_seconds": 26.69,
+  "source_bytes": 61807155,
   "total_source_products": 5461,
   "combined_unique_products": 4563,
   "update_skus": 8228,
   "inventory-update.xml": {
     "skus": 8228,
-    "bytes": 1008039
+    "bytes": 1008038
   },
   "warehouse-status.csv": {
     "skus": 8228,
-    "bytes": 176868
+    "bytes": 173969
   },
   "warehouse-check.json": {
     "samples": 10,
