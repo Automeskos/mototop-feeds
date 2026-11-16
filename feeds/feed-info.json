@@ -1,16 +1,16 @@
 {
-  "download_seconds": 37.2,
-  "source_bytes": 61097825,
-  "total_source_products": 5397,
-  "combined_unique_products": 4575,
-  "update_skus": 8166,
+  "download_seconds": 43.16,
+  "source_bytes": 61101088,
+  "total_source_products": 5398,
+  "combined_unique_products": 4576,
+  "update_skus": 8167,
   "inventory-update.xml": {
-    "skus": 8166,
-    "bytes": 1001038
+    "skus": 8167,
+    "bytes": 1001165
   },
   "warehouse-status.csv": {
-    "skus": 8166,
-    "bytes": 172870
+    "skus": 8167,
+    "bytes": 172893
   },
   "warehouse-check.json": {
     "samples": 10,
