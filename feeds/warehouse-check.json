@@ -37,7 +37,7 @@
       "fields": [
         {
           "path": "/feed/products/product[2]/quantity",
-          "value": "3"
+          "value": "1"
         },
         {
           "path": "/feed/products/product[2]/stock_status",
